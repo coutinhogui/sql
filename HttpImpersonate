@@ -1,0 +1,60 @@
+using Microsoft.AspNetCore.Http;
+using System;
+using System.Runtime.InteropServices;
+using System.Security.Principal;
+using System.Threading.Tasks;
+
+public class ImpersonationMiddleware
+{
+    private readonly RequestDelegate _next;
+    private readonly string _domain;
+    private readonly string _username;
+    private readonly string _password;
+
+    public ImpersonationMiddleware(RequestDelegate next, string domain, string username, string password)
+    {
+        _next = next;
+        _domain = domain;
+        _username = username;
+        _password = password;
+    }
+
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+    public static extern bool LogonUser(string lpszUsername, string lpszDomain, string lpszPassword, int dwLogonType, int dwLogonProvider, out IntPtr phToken);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto)]
+    public extern static bool CloseHandle(IntPtr handle);
+
+    public async Task Invoke(HttpContext context)
+    {
+        IntPtr tokenHandle = IntPtr.Zero;
+        bool returnValue = LogonUser(_username, _domain, _password, 2, 0, out tokenHandle);
+
+        if (!returnValue)
+        {
+            int ret = Marshal.GetLastWin32Error();
+            context.Response.StatusCode = 500;
+            await context.Response.WriteAsync($"LogonUser failed with error code: {ret}");
+            return;
+        }
+
+        await WindowsIdentity.RunImpersonatedAsync(new SafeAccessTokenHandle(tokenHandle), async () =>
+        {
+            await _next(context);
+        });
+
+        if (tokenHandle != IntPtr.Zero)
+        {
+            CloseHandle(tokenHandle);
+        }
+    }
+}
+
+// Extensão para adicionar o middleware
+public static class ImpersonationMiddlewareExtensions
+{
+    public static IApplicationBuilder UseImpersonation(this IApplicationBuilder builder, string domain, string username, string password)
+    {
+        return builder.UseMiddleware<ImpersonationMiddleware>(domain, username, password);
+    }
+}
