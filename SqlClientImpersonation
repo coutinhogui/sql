@@ -1,0 +1,63 @@
+using System;
+using System.Data.SqlClient;
+using System.Runtime.InteropServices;
+using System.Security.Principal;
+using System.Security.Permissions;
+
+class Program
+{
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+    public static extern bool LogonUser(string lpszUsername, string lpszDomain, string lpszPassword, int dwLogonType, int dwLogonProvider, out IntPtr phToken);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto)]
+    public extern static bool CloseHandle(IntPtr handle);
+
+    static void Main()
+    {
+        string dominio = "DOMINIO";
+        string usuario = "UsuarioAD";
+        string senha = "SenhaDoUsuarioAD";
+        string servidor = "NOME_DO_SERVIDOR";
+        string bancoDeDados = "NOME_DO_BANCO";
+
+        IntPtr tokenHandle = IntPtr.Zero;
+        bool returnValue = LogonUser(usuario, dominio, senha, 2, 0, out tokenHandle);
+
+        if (!returnValue)
+        {
+            int ret = Marshal.GetLastWin32Error();
+            Console.WriteLine($"LogonUser failed with error code : {ret}");
+            return;
+        }
+
+        using (WindowsImpersonationContext impersonatedUser = WindowsIdentity.Impersonate(tokenHandle))
+        {
+            try
+            {
+                string connectionString = $"Server={servidor};Database={bancoDeDados};Integrated Security=True;";
+                using (SqlConnection conexao = new SqlConnection(connectionString))
+                {
+                    conexao.Open();
+                    Console.WriteLine("Conexão aberta com sucesso.");
+
+                    // Aqui você pode executar seus comandos SQL
+
+                    conexao.Close();
+                    Console.WriteLine("Conexão fechada com sucesso.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Erro: {ex.Message}");
+            }
+            finally
+            {
+                impersonatedUser.Undo();
+                if (tokenHandle != IntPtr.Zero)
+                {
+                    CloseHandle(tokenHandle);
+                }
+            }
+        }
+    }
+}
